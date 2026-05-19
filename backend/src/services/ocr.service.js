@@ -56,6 +56,12 @@ exports.extractTransactions = async (file) => {
       status: 'processed',
     };
   } catch (error) {
+    if (error.message === 'fetch failed' || error.cause?.code === 'ECONNREFUSED') {
+      throw new Error(
+        `OCR service is not running at ${env.OCR_SERVICE_URL}. Start the OCR service before uploading statements.`
+      );
+    }
+
     throw new Error(`PaddleOCR extraction failed: ${error.message}`);
   }
 };

@@ -2,6 +2,8 @@
 
 A comprehensive system for extracting, parsing, and analyzing bank statements using OCR technology.
 
+> 📌 **Recent Fixes**: Improved document extraction with flexible date/amount parsing and comprehensive debugging tools. See [FIXES_SUMMARY.md](FIXES_SUMMARY.md) for details.
+
 ## Project Overview
 
 This project consists of three main components:

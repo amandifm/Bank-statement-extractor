@@ -1,5 +1,26 @@
-<!-- Backend .env -->
+# Setup Guide
 
+This project consists of three services:
+
+1. Backend API
+2. Frontend
+3. OCR Service
+
+Create a `.env` file in each service directory and add the following configurations.
+
+---
+
+# Backend Environment Variables
+
+Create:
+
+```bash
+backend/.env
+```
+
+Add:
+
+```env
 NODE_ENV=development
 API_PORT=5000
 
@@ -38,13 +59,13 @@ LOG_FORMAT=combined
 # CORS
 CORS_ORIGIN=http://localhost:3000
 
-# Email (optional)
+# Email (Optional)
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USER=
 SMTP_PASSWORD=
 
-# AWS S3 (optional - for cloud storage)
+# AWS S3 (Optional - Cloud Storage)
 AWS_REGION=us-east-1
 AWS_ACCESS_KEY_ID=
 AWS_SECRET_ACCESS_KEY=
@@ -53,11 +74,21 @@ S3_BUCKET=
 # Application
 APP_NAME=Bank Statement Extractor
 APP_URL=http://localhost:5000
+```
 
-<!-- frontend .env -->
+---
 
 # Frontend Environment Variables
 
+Create:
+
+```bash
+frontend/.env.local
+```
+
+Add:
+
+```env
 # API Configuration
 NEXT_PUBLIC_API_URL=http://localhost:5000
 
@@ -70,7 +101,7 @@ NEXT_PUBLIC_ENABLE_ANALYTICS=false
 NEXT_PUBLIC_ENABLE_EXPORT=true
 
 # File Upload Settings
-NEXT_PUBLIC_MAX_FILE_SIZE=52428800  # 50MB in bytes
+NEXT_PUBLIC_MAX_FILE_SIZE=52428800
 NEXT_PUBLIC_ALLOWED_FILE_TYPES=.pdf,.png,.jpg,.jpeg
 
 # Pagination
@@ -78,11 +109,21 @@ NEXT_PUBLIC_TRANSACTIONS_PER_PAGE=20
 
 # UI Settings
 NEXT_PUBLIC_THEME=light
+```
 
-<!-- ocr-service -->
+---
 
 # OCR Service Environment Variables
 
+Create:
+
+```bash
+ocr-service/.env
+```
+
+Add:
+
+```env
 # Flask Configuration
 FLASK_ENV=development
 OCR_PORT=8000
@@ -106,7 +147,7 @@ PDF_CONVERSION_TIMEOUT=30
 # Temporary File Configuration
 TEMP_DIR=./app/temp
 CLEANUP_TEMP_FILES=True
-TEMP_FILE_MAX_AGE=86400  # 24 hours in seconds
+TEMP_FILE_MAX_AGE=86400
 
 # Logging
 LOG_LEVEL=DEBUG
@@ -118,3 +159,30 @@ CORS_ORIGINS=http://localhost:5000,http://localhost:3000
 # Model Cache
 MODEL_CACHE_DIR=./models
 AUTO_UPDATE_MODELS=True
+```
+
+---
+
+# Service Ports
+
+| Service | Port |
+|----------|------|
+| Frontend | 3000 |
+| Backend API | 5000 |
+| OCR Service | 8000 |
+| PostgreSQL | 5432 |
+| Redis | 6379 |
+
+---
+
+# Notes
+
+- Ensure PostgreSQL and Redis are running before starting the backend.
+- Update `JWT_SECRET` before deploying to production.
+- Configure SMTP credentials only if email functionality is required.
+- Configure AWS S3 credentials only if cloud storage is enabled.
+- GPU OCR can be enabled by setting:
+
+```env
+PADDLE_USE_GPU=True
+```

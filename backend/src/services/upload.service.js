@@ -25,6 +25,7 @@ exports.processUpload = async (file) => {
       transactions: extractedData.transactions,
       rawText: extractedData.rawText,
       document: extractedData.document,
+      metadata: extractedData.metadata || {}, // Include extracted metadata
     };
 
     uploadStatuses.set(fileId, {

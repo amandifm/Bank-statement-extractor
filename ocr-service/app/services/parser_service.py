@@ -3,6 +3,7 @@ import logging
 from app.extraction.regex_parser import parse_transactions
 from app.extraction.row_detector import detect_rows
 from app.extraction.table_detector import detect_table_region
+from app.services.metadata_service import extract_document_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -67,9 +68,13 @@ def parse_bank_statement(ocr_lines):
     
     logger.info(f"Parsing complete. Summary: {summary}")
     
+    # Extract document metadata
+    metadata = extract_document_metadata(raw_text)
+    
     return {
         "transactions": transactions,
         "summary": summary,
         "raw_text": raw_text,
         "rows": rows,
+        "metadata": metadata,
     }

@@ -20,7 +20,7 @@ DATE_PATTERN_COMPILED = [re.compile(pattern, re.IGNORECASE) for pattern in DATE_
 AMOUNT_PATTERN = re.compile(
     r"(?:^|\s)"
     r"(?P<currency>[$])?"
-    r"(?P<amount>-?(?:\d{1,3}(?:,\d{3})+|\d+)[.,:]\d{2}|-?\d{1,3}(?:,\d{3})*\.\d{2}|-?\d+\.\d{2})"
+    r"(?P<amount>-?(?:\d{1,3}(?:,\d{3})+|\d+)[.,:]\\d{2}|-?\d{1,3}(?:,\d{3})*\.\d{2}|-?\d+\.\d{2})"
     r"(?:\s*(?:CR|DR|D|C))?"
     r"(?=\s|$)",
     re.IGNORECASE,
@@ -28,14 +28,21 @@ AMOUNT_PATTERN = re.compile(
 
 COLUMN_ALIASES = {
     "date": "date",
+    "value date": "value_date",      # Yes Bank has separate Value Date column
+    "post date": "date",             # Suncoast "Post Date"
+    "eff date": "value_date",        # Suncoast "Eff Date"
     "description": "description",
     "particulars": "description",
     "details": "description",
     "narration": "description",
+    "transaction description": "description",   # Suncoast
+    "transaction details": "description",
     "ref": "reference",
     "reference": "reference",
     "instrument": "reference",
     "instrument no": "reference",
+    "card": "reference",             # CreditWize card ID column
+    "card id": "reference",
     "withdrawal": "debit",
     "withdrawals": "debit",
     "withdraw": "debit",
@@ -45,6 +52,9 @@ COLUMN_ALIASES = {
     "deposits": "credit",
     "credit": "credit",
     "credits": "credit",
+    # Suncoast / single-amount-column statements
+    "amount": "amount",
+    "new balance": "balance",
     "balance": "balance",
 }
 
@@ -187,7 +197,12 @@ def _normalize_header_label(text: str) -> Optional[str]:
 
 
 def build_table_context(row: dict) -> Optional[dict]:
-    """Infer table columns from a visual header row."""
+    """
+    Infer table columns from a visual header row.
+
+    Extended to support single-amount-column layouts (Suncoast: Amount +
+    New Balance) in addition to the traditional debit/credit layout.
+    """
     items = row.get("items") or []
     if not items:
         return None
@@ -208,7 +223,15 @@ def build_table_context(row: dict) -> Optional[dict]:
             seen.add(label)
 
     names = {column["name"] for column in columns}
-    if "date" not in names or "balance" not in names or not ({"debit", "credit"} & names):
+
+    # Require at minimum: a date column, a balance column, and either
+    # debit/credit columns OR a single "amount" column.
+    has_date = "date" in names
+    has_balance = "balance" in names
+    has_debit_credit = bool({"debit", "credit"} & names)
+    has_amount = "amount" in names
+
+    if not has_date or not has_balance or not (has_debit_credit or has_amount):
         return None
 
     columns = sorted(columns, key=lambda column: column["center"])
@@ -218,7 +241,9 @@ def build_table_context(row: dict) -> Optional[dict]:
         right = float("inf") if index == len(columns) - 1 else (column["center"] + columns[index + 1]["center"]) / 2
         boundaries.append({**column, "left": left, "right": right})
 
-    return {"columns": boundaries}
+    # Tag whether this is a single-amount-column layout
+    layout = "amount_column" if (has_amount and not has_debit_credit) else "debit_credit"
+    return {"columns": boundaries, "layout": layout}
 
 
 def _bucket_items(row: dict, context: dict) -> Dict[str, List[str]]:
@@ -277,6 +302,45 @@ def normalize_logical_rows(rows: List[dict]) -> List[dict]:
     return logical_rows
 
 
+def _resolve_debit_credit_from_amount(
+    amount: Optional[float],
+    text: str,
+    previous_balance: Optional[float],
+    balance: Optional[float],
+) -> tuple[Optional[float], Optional[float], str]:
+    """
+    Resolve a single-amount-column value into (debit, credit, type).
+
+    Suncoast stores withdrawals as negative amounts in the Amount column.
+    Strategy (in priority order):
+      1. Negative amount → Debit
+      2. Balance delta vs previous balance → determines direction
+      3. Keyword in description → determines direction
+      4. Default → Credit (deposits are more common as positive)
+    """
+    if amount is None:
+        return None, None, "Debit"
+
+    # 1. Signed amount
+    if amount < 0:
+        return abs(amount), None, "Debit"
+    if amount > 0:
+        # 2. Balance delta
+        if previous_balance is not None and balance is not None:
+            delta = round(balance - previous_balance, 2)
+            if delta < 0:
+                return abs(amount), None, "Debit"
+            if delta > 0:
+                return None, abs(amount), "Credit"
+        # 3. Keywords
+        t = detect_type(text)
+        if t == "Debit":
+            return abs(amount), None, "Debit"
+        return None, abs(amount), "Credit"
+
+    return None, None, "Debit"
+
+
 def parse_transaction_row_by_columns(
     row: dict,
     context: dict,
@@ -294,46 +358,72 @@ def parse_transaction_row_by_columns(
     if looks_like_header(text) and "opening balance" not in text.lower():
         return None
 
-    debit = _amount_from_bucket(buckets, "debit")
-    credit = _amount_from_bucket(buckets, "credit")
-    balance = _amount_from_bucket(buckets, "balance")
+    layout = context.get("layout", "debit_credit")
+    debit: Optional[float] = None
+    credit: Optional[float] = None
 
-    if balance is None:
-        values = money_values_from_text(text)
-        balance = values[-1] if values else None
-
-    if debit is None and credit is None:
-        if previous_balance is not None and balance is not None:
-            delta = round(balance - previous_balance, 2)
-            if delta > 0:
-                credit = abs(delta)
-            elif delta < 0:
-                debit = abs(delta)
-        else:
+    if layout == "amount_column":
+        # Single signed-amount column (e.g. Suncoast)
+        raw_amount = _amount_from_bucket(buckets, "amount")
+        balance = _amount_from_bucket(buckets, "balance")
+        if balance is None:
             values = money_values_from_text(text)
-            if len(values) >= 2:
-                debit = abs(values[-2])
+            balance = values[-1] if values else None
+        debit, credit, transaction_type = _resolve_debit_credit_from_amount(
+            raw_amount, text, previous_balance, balance
+        )
+    else:
+        # Traditional debit / credit columns
+        debit = _amount_from_bucket(buckets, "debit")
+        credit = _amount_from_bucket(buckets, "credit")
+        balance = _amount_from_bucket(buckets, "balance")
+
+        if balance is None:
+            values = money_values_from_text(text)
+            balance = values[-1] if values else None
+
+        if debit is None and credit is None:
+            if previous_balance is not None and balance is not None:
+                delta = round(balance - previous_balance, 2)
+                if delta > 0:
+                    credit = abs(delta)
+                elif delta < 0:
+                    debit = abs(delta)
+            else:
+                values = money_values_from_text(text)
+                if len(values) >= 2:
+                    debit = abs(values[-2])
+
+        transaction_type = "Credit" if credit is not None and debit is None else "Debit"
+
+    # Fix: debit/credit must always be stored as positive values
+    if debit is not None:
+        debit = abs(debit)
+    if credit is not None:
+        credit = abs(credit)
 
     description_parts = buckets.get("description", []) + buckets.get("reference", [])
     description = strip_leading_date(" ".join(part for part in description_parts if part))
     if not description:
         first_amount = next(AMOUNT_PATTERN.finditer(text), None)
-        description = clean_description(text, date_match, first_amount.start() if first_amount else len(text))
+        if date_match:
+            description = clean_description(
+                text, date_match, first_amount.start() if first_amount else len(text)
+            )
 
     if not description or "end of transactions" in description.lower():
         return None
     if not date_match and balance is None:
         return None
 
-    transaction_type = "Credit" if credit is not None and debit is None else "Debit"
     confidence = min(0.99, max(0.5, row.get("confidence", 0.75)))
 
     return Transaction(
         id=f"txn-{index:04d}",
         date=date_match.group("date") if date_match else "",
         description=description[:100],
-        debit=abs(debit) if debit is not None else None,
-        credit=abs(credit) if credit is not None else None,
+        debit=debit,
+        credit=credit,
         balance=balance,
         type=transaction_type,
         confidence=round(confidence, 3),
@@ -347,7 +437,17 @@ def parse_transaction_row(
     index: int,
     previous_balance: Optional[float] = None,
 ) -> Optional[Transaction]:
-    """Parse a single transaction row from OCR output."""
+    """
+    Parse a single transaction row from OCR output (fallback / no-context path).
+
+    Handles the Yes Bank / Bank of Baroda pattern where a row contains three
+    money values: Withdrawals, Deposits, Balance.  In that layout the second-
+    to-last value may be 0.00 (the empty column), so we cannot blindly use
+    values[-2] as the transaction amount.
+
+    Fix: when there are exactly 3 money values (w, d, bal) and one of the first
+    two is zero, pick the non-zero one as the transaction amount.
+    """
     text = re.sub(r"\s+", " ", row["text"]).strip()
 
     if not text:
@@ -365,9 +465,54 @@ def parse_transaction_row(
         return None
 
     balance = numeric_amounts[-1]
-    transaction_amount = numeric_amounts[-2] if len(numeric_amounts) >= 2 else numeric_amounts[0]
     transaction_type = detect_type(text)
 
+    # --- Resolve transaction amount ----------------------------------------
+    if len(numeric_amounts) == 1:
+        # Only a balance; derive amount from previous balance
+        if previous_balance is not None:
+            delta = round(balance - previous_balance, 2)
+            transaction_amount = abs(delta)
+            transaction_type = "Credit" if delta > 0 else "Debit"
+        else:
+            return None  # not enough information
+
+    elif len(numeric_amounts) == 2:
+        # Standard two-value row: amount + balance
+        transaction_amount = abs(numeric_amounts[-2])
+        if previous_balance is not None:
+            delta = round(balance - previous_balance, 2)
+            transaction_type = "Credit" if delta > 0 else "Debit"
+            transaction_amount = abs(delta)
+
+    elif len(numeric_amounts) == 3:
+        # Three-value row: Withdrawals | Deposits | Balance  (Yes Bank, BoB)
+        # One of the first two will be 0.00 — use the non-zero one.
+        w, d = numeric_amounts[0], numeric_amounts[1]
+        if w != 0 and d == 0:
+            transaction_amount = abs(w)
+            transaction_type = "Debit"
+        elif d != 0 and w == 0:
+            transaction_amount = abs(d)
+            transaction_type = "Credit"
+        else:
+            # Both non-zero (rare) — fall back to balance delta
+            if previous_balance is not None:
+                delta = round(balance - previous_balance, 2)
+                transaction_amount = abs(delta)
+                transaction_type = "Credit" if delta > 0 else "Debit"
+            else:
+                transaction_amount = abs(numeric_amounts[-2])
+    else:
+        # 4+ values: single signed amount + balance is common (Suncoast fallback)
+        if previous_balance is not None:
+            delta = round(balance - previous_balance, 2)
+            transaction_amount = abs(delta)
+            transaction_type = "Credit" if delta > 0 else "Debit"
+        else:
+            transaction_amount = abs(numeric_amounts[-2])
+
+    # Override type via balance delta when available (most reliable signal)
     if previous_balance is not None:
         delta = round(balance - previous_balance, 2)
         if delta > 0:
@@ -377,13 +522,14 @@ def parse_transaction_row(
             transaction_type = "Debit"
             transaction_amount = abs(delta)
 
-    description = clean_description(text, date_match, amount_matches[0].start())
+    description = clean_description(
+        text, date_match, amount_matches[0].start() if amount_matches else len(text)
+    )
 
     debit = transaction_amount if transaction_type == "Debit" else None
     credit = transaction_amount if transaction_type == "Credit" else None
 
-    confidence = row.get("confidence", 0.75)
-    confidence = min(0.99, max(0.5, confidence))
+    confidence = min(0.99, max(0.5, row.get("confidence", 0.75)))
 
     return Transaction(
         id=f"txn-{index:04d}",

@@ -3,24 +3,37 @@ from typing import Dict, List, Optional
 
 from app.models.transaction import Transaction
 
+# ─── Date patterns ─────────────────────────────────────────────────────────────
 DATE_PATTERNS = [
+    # ISO: 2025-08-01
     r"(?<!\d)(?P<date>\d{4}[/-]\d{1,2}[/-]\d{1,2})(?!\d)",
-    r"(?<!\d)(?P<date>\d{1,2}[./:-]\d{1,2}[./:-]\d{2,4})(?!\d)",
-    r"(?<!\d)(?P<date>\d{4}[./:-]\d{2,4})(?!\d)",
-    r"(?<!\d)(?P<date>\d{1,2}[/-]\d{1,2}[/-]\d{2,4})(?!\d)",
-    r"(?<!\d)(?P<date>\d{1,2}[/-]\d{1,2})(?![/-]\d|\d)",
-    r"(?P<date>mm/dd/yyyy)",
-    r"(?<!\d)(?P<date>\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})(?!\d)",
-    r"(?<!\d)(?P<date>\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{2,4})(?!\d)",
+    # US with 4-year: 08/01/2025, 08-01-2025
+    r"(?<!\d)(?P<date>\d{1,2}[./\-]\d{1,2}[./\-]\d{4})(?!\d)",
+    # US with 2-year: 08/01/25, 08-01-25
+    r"(?<!\d)(?P<date>\d{1,2}[./\-]\d{1,2}[./\-]\d{2})(?!\d)",
+    # US without year, including OCR-spaced separators: 8/01, 6 / 02
+    r"(?<!\d)(?P<date>\d{1,2}\s*/\s*\d{1,2})(?!\s*/\s*\d)",
+    # Navy Federal / BMO style: 07-01 (month-day, no year)
+    r"(?<!\d)(?P<date>\d{1,2}-\d{1,2})(?!\d)",
+    # TD Bank: Jul 01 2025
+    r"(?P<date>\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{2,4})",
+    # Month DD YYYY: August 01 2025
+    r"(?P<date>(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4})",
+    # US Bank: "Aug 1" or "Aug\n1" (date split across tokens)
+    r"(?P<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}(?:,\s*\d{4})?)",
 ]
 
-DATE_PATTERN_COMPILED = [re.compile(pattern, re.IGNORECASE) for pattern in DATE_PATTERNS]
+DATE_PATTERN_COMPILED = [re.compile(p, re.IGNORECASE) for p in DATE_PATTERNS]
 
-# Require cents so dates/card ids such as 06 or 1111 are never parsed as money.
+# Require cents (two decimal digits) to avoid card IDs / phone numbers
 AMOUNT_PATTERN = re.compile(
     r"(?:^|\s)"
-    r"(?P<currency>[$])?"
-    r"(?P<amount>-?(?:\d{1,3}(?:,\d{3})+|\d+)[.,:]\\d{2}|-?\d{1,3}(?:,\d{3})*\.\d{2}|-?\d+\.\d{2})"
+    r"(?P<open_paren>\()?"
+    r"(?P<currency>[^\d\s(+-])?"
+    r"(?P<sign>-)?"
+    r"(?P<amount>(?:(?:\d{1,3}(?:,\d{3})+|\d+)?\.\d{2}))"
+    r"(?P<trail_sign>-)?"
+    r"(?P<close_paren>\))?"
     r"(?:\s*(?:CR|DR|D|C))?"
     r"(?=\s|$)",
     re.IGNORECASE,
@@ -28,82 +41,89 @@ AMOUNT_PATTERN = re.compile(
 
 COLUMN_ALIASES = {
     "date": "date",
-    "value date": "value_date",      # Yes Bank has separate Value Date column
-    "post date": "date",             # Suncoast "Post Date"
-    "eff date": "value_date",        # Suncoast "Eff Date"
+    "posting date": "date",
+    "postingdate": "date",
+    "post date": "date",
+    "posted": "date",
+    "postdate": "date",
+    "posting": "date",
+    "value date": "value_date",
+    "eff date": "value_date",
+    "effective date": "value_date",
+    "transaction date": "value_date",
+    "transactiondate": "value_date",
     "description": "description",
+    "transaction description": "description",
+    "transaction detail": "description",
+    "transaction details": "description",
+    "description of transaction": "description",
     "particulars": "description",
     "details": "description",
     "narration": "description",
-    "transaction description": "description",   # Suncoast
-    "transaction details": "description",
     "ref": "reference",
+    "ref no": "reference",
     "reference": "reference",
+    "reference no": "reference",
     "instrument": "reference",
     "instrument no": "reference",
-    "card": "reference",             # CreditWize card ID column
+    "card": "reference",
     "card id": "reference",
+    "check no": "reference",
+    "check number": "reference",
+    "cheque no": "reference",
     "withdrawal": "debit",
     "withdrawals": "debit",
     "withdraw": "debit",
     "debit": "debit",
     "debits": "debit",
+    "debit amount": "debit",
+    "payment": "debit",
+    "payments": "debit",
     "deposit": "credit",
     "deposits": "credit",
     "credit": "credit",
     "credits": "credit",
-    # Suncoast / single-amount-column statements
+    "credit amount": "credit",
     "amount": "amount",
     "new balance": "balance",
     "balance": "balance",
+    "running balance": "balance",
+    "ending balance": "balance",
 }
 
 HEADER_WORDS = {
-    "date",
-    "description",
-    "particulars",
-    "withdrawal",
-    "deposit",
-    "debit",
-    "credit",
-    "balance",
-    "amount",
-    "transaction",
-    "reference",
+    "date", "description", "particulars", "withdrawal", "deposit",
+    "debit", "credit", "balance", "amount", "transaction", "reference",
+    "posting", "posted",
 }
 
 NON_TRANSACTION_PHRASES = {
-    "account number",
-    "closing balance",
-    "copyright",
-    "opening balance",
-    "page no",
-    "sampletemplates",
-    "statement date",
-    "statement period",
-    "templatelab",
-    "total deposits",
-    "total withdrawals",
+    "account number", "closing balance", "copyright", "opening balance",
+    "page no", "sampletemplates", "statement date", "statement period",
+    "templatelab", "total deposits", "total withdrawals", "total debits",
+    "total credits", "beginning balance", "ending balance",
+    "account summary", "account activity", "subtotal",
+    "daily balance summary",
 }
 
+# ─── Amount parser ──────────────────────────────────────────────────────────────
 
 def parse_amount(value: str) -> Optional[float]:
-    """Parse a money amount from OCR text."""
+    """Parse a money string into a float. Returns None if not parseable."""
     if not value:
         return None
-
-    cleaned = re.sub(r"[^\d.\-,:]", "", value).strip()
+    cleaned = re.sub(r"[^\d.\-,]", "", value).strip()
     if not cleaned or cleaned in {"-", ".", ","}:
         return None
-
     try:
         is_negative = cleaned.startswith("-") or cleaned.endswith("-")
         normalized = cleaned.strip("-")
-        separators = [index for index, char in enumerate(normalized) if char in ".,:"]
+        # Find last separator — if 2 digits follow it, treat it as decimal
+        separators = [i for i, c in enumerate(normalized) if c in ".,"]
         if separators and len(normalized) - separators[-1] == 3:
-            decimal_index = separators[-1]
-            whole = re.sub(r"[^\d]", "", normalized[:decimal_index])
-            cents = re.sub(r"[^\d]", "", normalized[decimal_index + 1:])
+            dec = separators[-1]
+            whole = re.sub(r"[^\d]", "", normalized[:dec])
+            cents = re.sub(r"[^\d]", "", normalized[dec + 1:])
             normalized = f"{whole}.{cents}"
         else:
             normalized = normalized.replace(",", "")
@@ -114,67 +134,114 @@ def parse_amount(value: str) -> Optional[float]:
 
 
 def looks_like_header(text: str) -> bool:
-    """Check if text looks like a header or statement summary row."""
     lowered = text.lower()
-    if any(phrase in lowered for phrase in NON_TRANSACTION_PHRASES):
+    if any(p in lowered for p in NON_TRANSACTION_PHRASES):
+        # Allow "opening balance" rows that carry an amount (they set prev_balance)
+        if "opening balance" in lowered or "beginning balance" in lowered:
+            return False
         return True
-
-    header_count = sum(1 for word in HEADER_WORDS if word in lowered)
-    return header_count >= 2
+    count = sum(1 for w in HEADER_WORDS if w in lowered)
+    return count >= 2
 
 
 def find_date(text: str) -> Optional[re.Match]:
-    """Find the first date in a row."""
     for pattern in DATE_PATTERN_COMPILED:
-        match = pattern.search(text)
-        if match:
-            return match
+        m = pattern.search(text)
+        if m:
+            return m
     return None
 
 
+def clean_date(value: str) -> str:
+    return re.sub(r"\s*([/.-])\s*", r"\1", value.strip())
+
+
 def detect_type(text: str) -> str:
-    """Detect transaction type from text when balance movement is unavailable."""
     lowered = text.lower()
-
-    if any(word in lowered for word in ["cr", "credit", "deposit", "received", "transfer in", "+"]):
+    if any(w in lowered for w in ["cr", "credit", "deposit", "received", "transfer in", "transfer from"]):
         return "Credit"
-
-    if any(word in lowered for word in ["dr", "debit", "withdrawal", "paid", "transfer out", "-"]):
+    if any(w in lowered for w in ["dr", "debit", "withdrawal", "paid", "payment", "transfer out",
+                                   "transfer to", "pos debit", "atm withdrawal", "check"]):
         return "Debit"
-
     return "Debit"
 
 
-def clean_description(text: str, date_match: re.Match, first_amount_position: int) -> str:
-    """Remove table columns before the transaction details."""
-    description = text[date_match.end():first_amount_position].strip(" -|:/")
-
-    # Typical card statement row:
-    # processed date, transaction date, card id, transaction details, amount, balance.
-    description = re.sub(r"^\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+", "", description)
-    description = re.sub(r"^\s*\d{3,6}\s+", "", description)
-    description = description.strip(" -|:/")
-
-    return description if len(description) >= 2 else "Transaction"
+def clean_description(text: str, date_match: re.Match, first_amount_pos: int) -> str:
+    desc = text[date_match.end():first_amount_pos].strip(" -|:/")
+    # Strip a second date (e.g. card statement with two dates)
+    desc = re.sub(r"^\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s+", "", desc)
+    # Strip short reference codes (3-6 digits)
+    desc = re.sub(r"^\s*\d{3,6}\s+", "", desc)
+    desc = desc.strip(" -|:/")
+    return desc if len(desc) >= 2 else "Transaction"
 
 
 def strip_leading_date(text: str) -> str:
-    """Remove a date prefix that OCR glued into the description cell."""
-    match = find_date(text)
-    if match and match.start() == 0:
-        return text[match.end():].strip(" -|:/")
+    m = find_date(text)
+    if m and m.start() == 0:
+        return text[m.end():].strip(" -|:/")
     return text.strip(" -|:/")
 
 
 def money_values_from_text(text: str) -> List[float]:
-    """Extract money values in row order."""
     values = []
-    for match in AMOUNT_PATTERN.finditer(text):
-        amount = parse_amount(match.group("amount"))
+    for m in AMOUNT_PATTERN.finditer(text):
+        raw = m.group("amount")
+        sign = m.group("sign") or m.group("trail_sign") or ""
+        if m.group("open_paren") and m.group("close_paren"):
+            sign = "-"
+        amount = parse_amount(sign + raw)
         if amount is not None:
             values.append(amount)
     return values
 
+
+def _compact_spaced_text(text: str) -> str:
+    """
+    Some PDFs expose text as one character per word: "6 / 0 2 D E P O S I T".
+    Collapse that shape enough for date, amount, and section parsing.
+    """
+    if len(re.findall(r"\b\w\b", text)) < 6:
+        return text
+    compact = re.sub(r"(?<=\b[A-Za-z])\s+(?=[A-Za-z]\b)", "", text)
+    compact = re.sub(r"(?<=\b\d)\s+(?=\d\b)", "", compact)
+    compact = re.sub(r"\s*/\s*", "/", compact)
+    compact = re.sub(r"\s*,\s*", ",", compact)
+    compact = re.sub(r"\s*\.\s*", ".", compact)
+    return re.sub(r"\s+", " ", compact).strip()
+
+
+def _section_type(text: str) -> Optional[str]:
+    lowered = re.sub(r"\s+", " ", _compact_spaced_text(text).lower())
+    if any(p in lowered for p in [
+        "deposits and credits",
+        "deposits and additions",
+        "deposit credits",
+        "electronic deposits",
+        "deposits",
+        "other credits",
+        "credits",
+    ]):
+        return "Credit"
+    if any(p in lowered for p in [
+        "withdrawals / debits",
+        "withdrawals and debits",
+        "checks / debits",
+        "checks paid",
+        "debits",
+        "electronic payments",
+        "electronic withdrawals",
+        "other withdrawals",
+        "withdrawals",
+        "atm & debit card withdrawals",
+        "atm debit withdrawals",
+        "fees",
+    ]):
+        return "Debit"
+    return None
+
+
+# ─── Column-layout helpers ──────────────────────────────────────────────────────
 
 def _item_text(item: dict) -> str:
     return re.sub(r"\s+", " ", item.get("text", "")).strip()
@@ -189,7 +256,6 @@ def _normalize_header_label(text: str) -> Optional[str]:
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if cleaned in COLUMN_ALIASES:
         return COLUMN_ALIASES[cleaned]
-
     for phrase, canonical in COLUMN_ALIASES.items():
         if phrase in cleaned:
             return canonical
@@ -199,63 +265,67 @@ def _normalize_header_label(text: str) -> Optional[str]:
 def build_table_context(row: dict) -> Optional[dict]:
     """
     Infer table columns from a visual header row.
-
-    Extended to support single-amount-column layouts (Suncoast: Amount +
-    New Balance) in addition to the traditional debit/credit layout.
+    Supports:
+      - Traditional debit/credit columns (Chase, PNC, BMO, Santander, Tab …)
+      - Single amount column (Suncoast, Wells Fargo MTD …)
+      - No-balance layouts (Navy Federal, Fifth Third — amounts only)
     """
     items = row.get("items") or []
     if not items:
         return None
 
     columns = []
-    seen = set()
-    for item in sorted(items, key=lambda value: value.get("x_min", 0)):
+    seen: set = set()
+    for item in sorted(items, key=lambda v: v.get("x_min", 0)):
         label = _normalize_header_label(_item_text(item))
         if label and label not in seen:
-            columns.append(
-                {
-                    "name": label,
-                    "x_min": float(item.get("x_min", 0)),
-                    "x_max": float(item.get("x_max", 0)),
-                    "center": _item_center(item),
-                }
-            )
+            columns.append({
+                "name": label,
+                "x_min": float(item.get("x_min", 0)),
+                "x_max": float(item.get("x_max", 0)),
+                "center": _item_center(item),
+            })
             seen.add(label)
 
-    names = {column["name"] for column in columns}
+    names = {c["name"] for c in columns}
 
-    # Require at minimum: a date column, a balance column, and either
-    # debit/credit columns OR a single "amount" column.
     has_date = "date" in names
     has_balance = "balance" in names
     has_debit_credit = bool({"debit", "credit"} & names)
     has_amount = "amount" in names
 
-    if not has_date or not has_balance or not (has_debit_credit or has_amount):
+    if not has_date or not (has_debit_credit or has_amount or has_balance):
         return None
 
-    columns = sorted(columns, key=lambda column: column["center"])
+    columns = sorted(columns, key=lambda c: c["center"])
     boundaries = []
-    for index, column in enumerate(columns):
-        left = -float("inf") if index == 0 else (columns[index - 1]["center"] + column["center"]) / 2
-        right = float("inf") if index == len(columns) - 1 else (column["center"] + columns[index + 1]["center"]) / 2
-        boundaries.append({**column, "left": left, "right": right})
+    for i, col in enumerate(columns):
+        left = -float("inf") if i == 0 else (columns[i - 1]["center"] + col["center"]) / 2
+        right = float("inf") if i == len(columns) - 1 else (col["center"] + columns[i + 1]["center"]) / 2
+        boundaries.append({**col, "left": left, "right": right})
 
-    # Tag whether this is a single-amount-column layout
-    layout = "amount_column" if (has_amount and not has_debit_credit) else "debit_credit"
+    if has_amount and not has_debit_credit and not has_balance:
+        layout = "amount_column_no_balance"
+    elif has_amount and not has_debit_credit:
+        layout = "amount_column"
+    elif has_debit_credit and not has_balance:
+        layout = "debit_credit_no_balance"
+    else:
+        layout = "debit_credit"
+
     return {"columns": boundaries, "layout": layout}
 
 
 def _bucket_items(row: dict, context: dict) -> Dict[str, List[str]]:
-    buckets = {column["name"]: [] for column in context.get("columns", [])}
-    for item in sorted(row.get("items") or [], key=lambda value: value.get("x_min", 0)):
+    buckets = {c["name"]: [] for c in context.get("columns", [])}
+    for item in sorted(row.get("items") or [], key=lambda v: v.get("x_min", 0)):
         text = _item_text(item)
         if not text:
             continue
         center = _item_center(item)
-        for column in context.get("columns", []):
-            if column["left"] <= center < column["right"]:
-                buckets.setdefault(column["name"], []).append(text)
+        for col in context.get("columns", []):
+            if col["left"] <= center < col["right"]:
+                buckets.setdefault(col["name"], []).append(text)
                 break
     return buckets
 
@@ -270,31 +340,28 @@ def _amount_from_bucket(buckets: Dict[str, List[str]], name: str) -> Optional[fl
 
 
 def _append_continuation(rows: List[dict], row: dict) -> bool:
+    """Attach a description-only continuation line to the previous transaction."""
     if not rows or find_date(row.get("text", "")) or looks_like_header(row.get("text", "")):
         return False
-
     text = re.sub(r"\s+", " ", row.get("text", "")).strip()
     if not text:
         return True
-    if any(phrase in text.lower() for phrase in NON_TRANSACTION_PHRASES):
+    if any(p in text.lower() for p in NON_TRANSACTION_PHRASES):
         return False
     if len(money_values_from_text(text)) >= 2:
         return False
-
     previous = rows[-1]
     if not find_date(previous.get("text", "")):
         return False
-
     previous["text"] = f"{previous.get('text', '')} {text}".strip()
     previous.setdefault("items", []).extend(row.get("items") or [])
     previous["confidence"] = min(previous.get("confidence", 0.75), row.get("confidence", 0.75))
-    previous["y_max"] = max(previous.get("y_max", row.get("y_max", 0)), row.get("y_max", 0))
+    previous["y_max"] = max(previous.get("y_max", 0), row.get("y_max", 0))
     return True
 
 
 def normalize_logical_rows(rows: List[dict]) -> List[dict]:
-    """Attach OCR continuation lines to the transaction row above them."""
-    logical_rows = []
+    logical_rows: List[dict] = []
     for row in rows:
         if _append_continuation(logical_rows, dict(row)):
             continue
@@ -302,161 +369,281 @@ def normalize_logical_rows(rows: List[dict]) -> List[dict]:
     return logical_rows
 
 
+# ─── Amount-column (single signed amount) resolution ───────────────────────────
+
 def _resolve_debit_credit_from_amount(
     amount: Optional[float],
     text: str,
     previous_balance: Optional[float],
     balance: Optional[float],
-) -> tuple[Optional[float], Optional[float], str]:
-    """
-    Resolve a single-amount-column value into (debit, credit, type).
-
-    Suncoast stores withdrawals as negative amounts in the Amount column.
-    Strategy (in priority order):
-      1. Negative amount → Debit
-      2. Balance delta vs previous balance → determines direction
-      3. Keyword in description → determines direction
-      4. Default → Credit (deposits are more common as positive)
-    """
+) -> tuple:
     if amount is None:
         return None, None, "Debit"
-
-    # 1. Signed amount
     if amount < 0:
         return abs(amount), None, "Debit"
     if amount > 0:
-        # 2. Balance delta
         if previous_balance is not None and balance is not None:
             delta = round(balance - previous_balance, 2)
             if delta < 0:
                 return abs(amount), None, "Debit"
             if delta > 0:
                 return None, abs(amount), "Credit"
-        # 3. Keywords
         t = detect_type(text)
         if t == "Debit":
             return abs(amount), None, "Debit"
         return None, abs(amount), "Credit"
-
     return None, None, "Debit"
 
 
-def parse_transaction_row_by_columns(
+def _resolve_debit_credit_from_signed_amount(
+    amount: Optional[float],
+    text: str,
+    forced_type: Optional[str] = None,
+) -> tuple:
+    if amount is None:
+        return None, None, forced_type or "Debit"
+    if amount < 0:
+        return abs(amount), None, "Debit"
+    if forced_type == "Debit":
+        return abs(amount), None, "Debit"
+    if forced_type == "Credit":
+        return None, abs(amount), "Credit"
+    explicit_type = detect_type(text)
+    if explicit_type == "Credit":
+        return None, abs(amount), "Credit"
+    if any(w in text.lower() for w in ["debit", "withdrawal", "payment", "paid", "fee", "check"]):
+        return abs(amount), None, "Debit"
+    return None, abs(amount), "Credit"
+
+
+# ─── Navy Federal / no-balance-column layout ────────────────────────────────────
+
+def _parse_navy_federal_row(
     row: dict,
-    context: dict,
     index: int,
-    previous_balance: Optional[float] = None,
+    previous_balance: Optional[float],
 ) -> Optional[Transaction]:
-    """Parse a transaction row using table column positions."""
+    """
+    Navy Federal statements print date and description on the LEFT column and
+    amount + balance on the RIGHT column (sometimes on a separate line).
+    The PDF extractor gives us lines like:
+        "07-01 Transfer From Shares   400.00   1,499.59"
+    or two separate lines:
+        "07-01 Transfer From Shares"
+        "400.00   1,499.59"
+    This parser handles both cases.
+    """
     text = re.sub(r"\s+", " ", row.get("text", "")).strip()
-    if not text:
+    if not text or looks_like_header(text):
         return None
 
-    buckets = _bucket_items(row, context)
-    date_text = _bucket_text(buckets, "date") or text
-    date_match = find_date(date_text)
-    if looks_like_header(text) and "opening balance" not in text.lower():
+    date_match = find_date(text)
+    values = money_values_from_text(text)
+
+    if not values:
         return None
 
-    layout = context.get("layout", "debit_credit")
-    debit: Optional[float] = None
-    credit: Optional[float] = None
+    balance: Optional[float] = None
+    amount: Optional[float] = None
 
-    if layout == "amount_column":
-        # Single signed-amount column (e.g. Suncoast)
-        raw_amount = _amount_from_bucket(buckets, "amount")
-        balance = _amount_from_bucket(buckets, "balance")
-        if balance is None:
-            values = money_values_from_text(text)
-            balance = values[-1] if values else None
-        debit, credit, transaction_type = _resolve_debit_credit_from_amount(
-            raw_amount, text, previous_balance, balance
-        )
-    else:
-        # Traditional debit / credit columns
-        debit = _amount_from_bucket(buckets, "debit")
-        credit = _amount_from_bucket(buckets, "credit")
-        balance = _amount_from_bucket(buckets, "balance")
+    if len(values) >= 2:
+        # last value = running balance, second-to-last = transaction amount
+        balance = values[-1]
+        amount = abs(values[-2])
+    elif len(values) == 1:
+        if previous_balance is not None:
+            balance = values[0]
+            delta = round(balance - previous_balance, 2)
+            amount = abs(delta)
+        else:
+            return None
 
-        if balance is None:
-            values = money_values_from_text(text)
-            balance = values[-1] if values else None
-
-        if debit is None and credit is None:
-            if previous_balance is not None and balance is not None:
-                delta = round(balance - previous_balance, 2)
-                if delta > 0:
-                    credit = abs(delta)
-                elif delta < 0:
-                    debit = abs(delta)
-            else:
-                values = money_values_from_text(text)
-                if len(values) >= 2:
-                    debit = abs(values[-2])
-
-        transaction_type = "Credit" if credit is not None and debit is None else "Debit"
-
-    # Fix: debit/credit must always be stored as positive values
-    if debit is not None:
-        debit = abs(debit)
-    if credit is not None:
-        credit = abs(credit)
-
-    description_parts = buckets.get("description", []) + buckets.get("reference", [])
-    description = strip_leading_date(" ".join(part for part in description_parts if part))
-    if not description:
-        first_amount = next(AMOUNT_PATTERN.finditer(text), None)
-        if date_match:
-            description = clean_description(
-                text, date_match, first_amount.start() if first_amount else len(text)
-            )
-
-    if not description or "end of transactions" in description.lower():
+    if amount is None or amount == 0:
         return None
-    if not date_match and balance is None:
-        return None
+
+    t_type = detect_type(text)
+    if previous_balance is not None and balance is not None:
+        delta = round(balance - previous_balance, 2)
+        if delta != 0:
+            t_type = "Credit" if delta > 0 else "Debit"
+            amount = abs(delta)
+
+    # Description: strip date prefix and amounts
+    desc = text
+    if date_match:
+        desc = text[date_match.end():]
+    # Remove trailing amounts
+    for m in list(AMOUNT_PATTERN.finditer(desc)):
+        desc = desc[:m.start()]
+    desc = desc.strip(" -|:/")
+    if not desc:
+        desc = "Transaction"
 
     confidence = min(0.99, max(0.5, row.get("confidence", 0.75)))
-
     return Transaction(
         id=f"txn-{index:04d}",
         date=date_match.group("date") if date_match else "",
-        description=description[:100],
-        debit=debit,
-        credit=credit,
+        description=desc[:100],
+        debit=abs(amount) if t_type == "Debit" else None,
+        credit=abs(amount) if t_type == "Credit" else None,
         balance=balance,
-        type=transaction_type,
+        type=t_type,
         confidence=round(confidence, 3),
         raw_text=text[:200],
         page=row.get("page", 1),
     )
 
 
+# ─── US Bank / "Aug 1" date style ───────────────────────────────────────────────
+
+def _merge_usbank_date_tokens(rows: List[dict]) -> List[dict]:
+    """
+    US Bank PDFs render dates as two separate lines:
+        "Aug"
+        "1  Electronic Deposit ..."
+    This merges the month token into the following description line.
+    """
+    MONTH_RE = re.compile(
+        r"^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$", re.IGNORECASE
+    )
+    merged: List[dict] = []
+    for row in rows:
+        text = row.get("text", "").strip()
+        if merged and MONTH_RE.match(merged[-1].get("text", "").strip()):
+            prev = merged[-1]
+            prev["text"] = f"{prev['text'].strip()} {text}"
+            prev.setdefault("items", []).extend(row.get("items") or [])
+            prev["y_max"] = max(prev.get("y_max", 0), row.get("y_max", 0))
+        else:
+            merged.append(dict(row))
+    return merged
+
+
+# ─── Column-aware row parser ────────────────────────────────────────────────────
+
+def parse_transaction_row_by_columns(
+    row: dict,
+    context: dict,
+    index: int,
+    previous_balance: Optional[float] = None,
+    forced_type: Optional[str] = None,
+) -> Optional[Transaction]:
+    text = re.sub(r"\s+", " ", _compact_spaced_text(row.get("text", ""))).strip()
+    if not text:
+        return None
+
+    buckets = _bucket_items(row, context)
+    date_text = _bucket_text(buckets, "date") or text
+    date_match = find_date(date_text)
+    if looks_like_header(text) and not any(
+        x in text.lower() for x in ("opening balance", "beginning balance")
+    ):
+        return None
+
+    layout = context.get("layout", "debit_credit")
+    debit: Optional[float] = None
+    credit: Optional[float] = None
+
+    if layout == "amount_column_no_balance":
+        raw_amount = _amount_from_bucket(buckets, "amount")
+        if raw_amount is None:
+            vals = money_values_from_text(text)
+            raw_amount = vals[-1] if vals else None
+        balance = None
+        debit, credit, t_type = _resolve_debit_credit_from_signed_amount(
+            raw_amount, text, forced_type
+        )
+    elif layout == "amount_column":
+        raw_amount = _amount_from_bucket(buckets, "amount")
+        balance = _amount_from_bucket(buckets, "balance")
+        if balance is None:
+            vals = money_values_from_text(text)
+            balance = vals[-1] if vals else None
+        debit, credit, t_type = _resolve_debit_credit_from_amount(
+            raw_amount, text, previous_balance, balance
+        )
+    else:
+        debit = _amount_from_bucket(buckets, "debit")
+        credit = _amount_from_bucket(buckets, "credit")
+        balance = _amount_from_bucket(buckets, "balance")
+        if balance is None and debit is None and credit is None:
+            vals = money_values_from_text(text)
+            balance = vals[-1] if vals else None
+
+        if debit is None and credit is None:
+            vals = money_values_from_text(text)
+            if previous_balance is not None and balance is not None:
+                delta = round(balance - previous_balance, 2)
+                amount = abs(vals[-2]) if len(vals) >= 2 else abs(delta)
+                if delta > 0:
+                    credit = amount
+                elif delta < 0:
+                    debit = amount
+            else:
+                if len(vals) >= 2:
+                    debit = abs(vals[-2])
+
+        if forced_type and ((forced_type == "Debit" and debit is None) or (forced_type == "Credit" and credit is None)):
+            amount = abs(debit if debit is not None else credit if credit is not None else 0)
+            debit = amount if forced_type == "Debit" else None
+            credit = amount if forced_type == "Credit" else None
+        t_type = "Credit" if credit is not None and debit is None else "Debit"
+
+    if debit is not None:
+        debit = abs(debit)
+    if credit is not None:
+        credit = abs(credit)
+
+    description_parts = buckets.get("description", []) + buckets.get("reference", [])
+    description = strip_leading_date(" ".join(p for p in description_parts if p))
+    if not description:
+        first_amount = next(AMOUNT_PATTERN.finditer(text), None)
+        if date_match:
+            description = clean_description(
+                text, date_match,
+                first_amount.start() if first_amount else len(text)
+            )
+
+    if not date_match:
+        return None
+    if not description or "end of transactions" in description.lower():
+        return None
+
+    confidence = min(0.99, max(0.5, row.get("confidence", 0.75)))
+    return Transaction(
+        id=f"txn-{index:04d}",
+        date=clean_date(date_match.group("date")) if date_match else "",
+        description=description[:100],
+        debit=debit,
+        credit=credit,
+        balance=balance,
+        type=t_type,
+        confidence=round(confidence, 3),
+        raw_text=text[:200],
+        page=row.get("page", 1),
+    )
+
+
+# ─── Fallback row parser ─────────────────────────────────────────────────────────
+
 def parse_transaction_row(
     row: dict,
     index: int,
     previous_balance: Optional[float] = None,
+    forced_type: Optional[str] = None,
+    has_running_balance: bool = True,
 ) -> Optional[Transaction]:
-    """
-    Parse a single transaction row from OCR output (fallback / no-context path).
-
-    Handles the Yes Bank / Bank of Baroda pattern where a row contains three
-    money values: Withdrawals, Deposits, Balance.  In that layout the second-
-    to-last value may be 0.00 (the empty column), so we cannot blindly use
-    values[-2] as the transaction amount.
-
-    Fix: when there are exactly 3 money values (w, d, bal) and one of the first
-    two is zero, pick the non-zero one as the transaction amount.
-    """
-    text = re.sub(r"\s+", " ", row["text"]).strip()
-
+    """Generic fallback: works for most single-/multi-amount-column statements."""
+    text = re.sub(r"\s+", " ", _compact_spaced_text(row.get("text", ""))).strip()
     if not text:
         return None
 
     date_match = find_date(text)
     if not date_match:
         return None
-    if looks_like_header(text) and "opening balance" not in text.lower():
+    if looks_like_header(text) and not any(
+        x in text.lower() for x in ("opening balance", "beginning balance")
+    ):
         return None
 
     amount_matches = list(AMOUNT_PATTERN.finditer(text))
@@ -464,127 +651,216 @@ def parse_transaction_row(
     if not numeric_amounts:
         return None
 
-    balance = numeric_amounts[-1]
-    transaction_type = detect_type(text)
+    t_type = forced_type or detect_type(text)
 
-    # --- Resolve transaction amount ----------------------------------------
-    if len(numeric_amounts) == 1:
-        # Only a balance; derive amount from previous balance
+    if not has_running_balance:
+        transaction_amount = abs(numeric_amounts[0])
+        balance = None
+    else:
+        balance = numeric_amounts[-1]
+
+    if not has_running_balance:
+        pass
+    elif len(numeric_amounts) == 1:
         if previous_balance is not None:
             delta = round(balance - previous_balance, 2)
             transaction_amount = abs(delta)
-            transaction_type = "Credit" if delta > 0 else "Debit"
+            t_type = "Credit" if delta > 0 else "Debit"
         else:
-            return None  # not enough information
+            return None
 
     elif len(numeric_amounts) == 2:
-        # Standard two-value row: amount + balance
-        transaction_amount = abs(numeric_amounts[-2])
+        transaction_amount = abs(numeric_amounts[0])
         if previous_balance is not None:
             delta = round(balance - previous_balance, 2)
-            transaction_type = "Credit" if delta > 0 else "Debit"
-            transaction_amount = abs(delta)
+            if delta != 0:
+                t_type = "Credit" if delta > 0 else "Debit"
 
     elif len(numeric_amounts) == 3:
-        # Three-value row: Withdrawals | Deposits | Balance  (Yes Bank, BoB)
-        # One of the first two will be 0.00 — use the non-zero one.
         w, d = numeric_amounts[0], numeric_amounts[1]
         if w != 0 and d == 0:
             transaction_amount = abs(w)
-            transaction_type = "Debit"
+            t_type = "Debit"
         elif d != 0 and w == 0:
             transaction_amount = abs(d)
-            transaction_type = "Credit"
+            t_type = "Credit"
         else:
-            # Both non-zero (rare) — fall back to balance delta
+            transaction_amount = abs(numeric_amounts[-2])
             if previous_balance is not None:
                 delta = round(balance - previous_balance, 2)
-                transaction_amount = abs(delta)
-                transaction_type = "Credit" if delta > 0 else "Debit"
+                t_type = "Credit" if delta > 0 else "Debit"
             else:
                 transaction_amount = abs(numeric_amounts[-2])
     else:
-        # 4+ values: single signed amount + balance is common (Suncoast fallback)
+        transaction_amount = abs(numeric_amounts[-2])
         if previous_balance is not None:
             delta = round(balance - previous_balance, 2)
-            transaction_amount = abs(delta)
-            transaction_type = "Credit" if delta > 0 else "Debit"
-        else:
-            transaction_amount = abs(numeric_amounts[-2])
+            t_type = "Credit" if delta > 0 else "Debit"
 
-    # Override type via balance delta when available (most reliable signal)
-    if previous_balance is not None:
+    # Balance delta is the most reliable signal when available
+    if has_running_balance and previous_balance is not None:
         delta = round(balance - previous_balance, 2)
         if delta > 0:
-            transaction_type = "Credit"
-            transaction_amount = abs(delta)
+            t_type = "Credit"
         elif delta < 0:
-            transaction_type = "Debit"
-            transaction_amount = abs(delta)
+            t_type = "Debit"
 
     description = clean_description(
-        text, date_match, amount_matches[0].start() if amount_matches else len(text)
+        text, date_match,
+        amount_matches[0].start() if amount_matches else len(text)
     )
 
-    debit = transaction_amount if transaction_type == "Debit" else None
-    credit = transaction_amount if transaction_type == "Credit" else None
+    debit = transaction_amount if t_type == "Debit" else None
+    credit = transaction_amount if t_type == "Credit" else None
 
     confidence = min(0.99, max(0.5, row.get("confidence", 0.75)))
-
     return Transaction(
         id=f"txn-{index:04d}",
-        date=date_match.group("date"),
+        date=clean_date(date_match.group("date")),
         description=description[:100],
         debit=debit,
         credit=credit,
         balance=balance,
-        type=transaction_type,
+        type=t_type,
         confidence=round(confidence, 3),
         raw_text=text[:200],
         page=row.get("page", 1),
     )
 
 
+# ─── No-balance fallback (Fifth Third, some amount-only layouts) ─────────────────
+
+def parse_transaction_row_no_balance(
+    row: dict,
+    index: int,
+    forced_type: Optional[str] = None,
+) -> Optional[Transaction]:
+    """
+    For statements that list amounts without a running balance (Fifth Third Deposits
+    / Withdrawals sections, Wells Fargo MTD export where balance is absent).
+    """
+    text = re.sub(r"\s+", " ", _compact_spaced_text(row.get("text", ""))).strip()
+    if not text or looks_like_header(text):
+        return None
+
+    date_match = find_date(text)
+    values = money_values_from_text(text)
+    if not date_match or not values:
+        return None
+
+    amount = abs(values[0])
+    t_type = forced_type or detect_type(text)
+    first_amount = next(AMOUNT_PATTERN.finditer(text), None)
+    desc = clean_description(
+        text,
+        date_match,
+        first_amount.start() if first_amount else len(text),
+    )
+
+    confidence = min(0.99, max(0.5, row.get("confidence", 0.75)))
+    return Transaction(
+        id=f"txn-{index:04d}",
+        date=clean_date(date_match.group("date")),
+        description=desc[:100],
+        debit=amount if t_type == "Debit" else None,
+        credit=amount if t_type == "Credit" else None,
+        balance=None,
+        type=t_type,
+        confidence=round(confidence, 3),
+        raw_text=text[:200],
+        page=row.get("page", 1),
+    )
+
+
+# ─── Top-level parse ─────────────────────────────────────────────────────────────
+
 def parse_transactions(rows: List[dict]) -> List[dict]:
-    """Parse multiple transaction rows."""
-    transactions = []
-    previous_balance = None
+    transactions: List[dict] = []
+    previous_balance: Optional[float] = None
     table_context_by_page: Dict[int, dict] = {}
+    section_type_by_page: Dict[int, Optional[str]] = {}
+
+    # Pre-process: merge US Bank "Aug\n1" date tokens
+    rows = _merge_usbank_date_tokens(rows)
 
     for row in normalize_logical_rows(rows):
         try:
             text = re.sub(r"\s+", " ", row.get("text", "")).strip()
-            lowered = text.lower()
-            money_values = money_values_from_text(text)
+            compact_text = _compact_spaced_text(text)
+            lowered = compact_text.lower()
+            money_values = money_values_from_text(compact_text)
             page = row.get("page", 1)
 
+            # Build/update column context from header rows
             header_context = build_table_context(row)
             if header_context:
                 table_context_by_page[page] = header_context
+                if header_context.get("layout") != "amount_column_no_balance":
+                    section_type_by_page[page] = None
                 continue
 
-            if "opening balance" in lowered and money_values and not find_date(text):
+            section_type = _section_type(compact_text)
+            if section_type and not find_date(compact_text):
+                section_type_by_page[page] = section_type
+                continue
+
+            # Capture opening/beginning balance
+            if any(x in lowered for x in ("opening balance", "beginning balance")) and money_values:
+                if not find_date(text):
+                    previous_balance = money_values[-1]
+                    continue
+                # If it also has a date, treat as a balance marker but don't emit transaction
                 previous_balance = money_values[-1]
+                continue
+
+            date_like_count = len(re.findall(r"\d{1,2}\s*[/-]\s*\d{1,2}(?:\s*[/-]\s*\d{2,4})?", compact_text))
+            transaction_words = (
+                "deposit", "credit", "debit", "withdrawal", "payment", "transfer",
+                "check", "fee", "purchase", "ach", "wire", "pos", "atm",
+            )
+            if date_like_count >= 2 and not any(word in lowered for word in transaction_words):
                 continue
 
             transaction = None
             context = table_context_by_page.get(page)
+            forced_type = section_type_by_page.get(page)
+
             if context:
                 transaction = parse_transaction_row_by_columns(
-                    row,
-                    context,
-                    len(transactions) + 1,
-                    previous_balance,
+                    row, context, len(transactions) + 1, previous_balance, forced_type
+                )
+
+            if forced_type and not transaction and find_date(compact_text) and money_values:
+                transaction = parse_transaction_row_no_balance(
+                    row, len(transactions) + 1, forced_type
                 )
 
             if not transaction:
-                transaction = parse_transaction_row(row, len(transactions) + 1, previous_balance)
+                transaction = parse_transaction_row(
+                    row,
+                    len(transactions) + 1,
+                    previous_balance,
+                    forced_type,
+                    has_running_balance=not forced_type,
+                )
+
+            # Last resort: no-balance parse (Fifth Third debit/credit section lines)
+            if not transaction and find_date(compact_text) and money_values:
+                transaction_candidate = parse_transaction_row_no_balance(
+                    row, len(transactions) + 1, forced_type
+                )
+                # Only use if the amount looks reasonable (not a page/account number)
+                if transaction_candidate and (transaction_candidate.debit or transaction_candidate.credit):
+                    transaction = transaction_candidate
 
             if transaction:
                 item = transaction.to_dict()
+                if item.get("debit") is None and item.get("credit") is None:
+                    continue
                 transactions.append(item)
                 if item.get("balance") is not None:
                     previous_balance = item["balance"]
+
         except Exception as e:
             print(f"Error parsing row: {e}")
             continue

@@ -14,6 +14,9 @@ const startServer = async () => {
       console.log(`Server is running on port ${PORT}`);
     });
 
+    // Set timeout to 10 minutes (600,000 ms) for long OCR scans
+    server.setTimeout(600000);
+
     // Graceful shutdown
     process.on('SIGTERM', () => {
       console.log('SIGTERM signal received: closing HTTP server');

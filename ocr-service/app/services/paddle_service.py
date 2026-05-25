@@ -8,7 +8,7 @@ from paddleocr import PaddleOCR
 @lru_cache(maxsize=1)
 def get_ocr_engine():
     language = os.getenv("PADDLE_LANGUAGE", "en")
-    return PaddleOCR(use_angle_cls=True, lang=language, show_log=False)
+    return PaddleOCR(use_angle_cls=False, lang=language, show_log=False)
 
 
 def _normalize_result(result, page_number: int) -> List[dict]:

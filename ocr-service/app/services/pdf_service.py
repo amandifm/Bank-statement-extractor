@@ -7,8 +7,8 @@ import pdfplumber
 
 logger = logging.getLogger(__name__)
 
-# zoom=4.16 ≈ 300 DPI (72 DPI × 4.16)
-_OCR_ZOOM = 4.16
+# zoom=2.77 ≈ 200 DPI (72 DPI × 2.77)
+_OCR_ZOOM = 2.77
 
 
 def is_digital_pdf(pdf_path: str) -> bool:

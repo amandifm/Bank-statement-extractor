@@ -104,6 +104,9 @@ NON_TRANSACTION_PHRASES = {
     "total credits", "beginning balance", "ending balance",
     "account summary", "account activity", "subtotal",
     "daily balance summary",
+    "previous balance", "previous statement balance",
+    "temporary statement", "formal statement of your account",
+    "regularly scheduled statement",
 }
 
 # ─── Amount parser ──────────────────────────────────────────────────────────────
@@ -232,6 +235,8 @@ def _compact_spaced_text(text: str) -> str:
 
 def _section_info(text: str) -> Optional[dict]:
     lowered = re.sub(r"\s+", " ", _compact_spaced_text(text).lower())
+    if re.match(r"^\d+\s+(?:credits?|debits?)\b", lowered):
+        return None
     if "balance" in lowered and any(w in lowered for w in ["debit", "withdrawal"]) and any(
         w in lowered for w in ["credit", "deposit"]
     ):
@@ -279,6 +284,17 @@ def _account_section_name(text: str) -> Optional[str]:
     if not match:
         return None
     return re.sub(r"\s+", " ", match.group(1)).strip()
+
+
+def _is_noise_text(text: str) -> bool:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return True
+    if re.fullmatch(r"[\W_]{5,}", compact):
+        return True
+    if re.fullmatch(r"([A-Za-z])\1{3,}.*", compact):
+        return True
+    return False
 
 
 # ─── Column-layout helpers ──────────────────────────────────────────────────────
@@ -386,11 +402,15 @@ def _append_continuation(rows: List[dict], row: dict) -> bool:
     text = re.sub(r"\s+", " ", row.get("text", "")).strip()
     if not text:
         return True
+    if _is_noise_text(text):
+        return False
     if any(p in text.lower() for p in NON_TRANSACTION_PHRASES):
         return False
     if len(money_values_from_text(text)) >= 2:
         return False
     previous = rows[-1]
+    if looks_like_header(previous.get("text", "")):
+        return False
     if not find_date(previous.get("text", "")):
         return False
     previous["text"] = f"{previous.get('text', '')} {text}".strip()
@@ -407,7 +427,11 @@ def normalize_logical_rows(rows: List[dict]) -> List[dict]:
         if logical_rows:
             prev = logical_rows[-1]
             if not find_date(prev.get("text", "")) and not money_values_from_text(prev.get("text", "")):
-                if find_date(current.get("text", "")):
+                if (
+                    find_date(current.get("text", ""))
+                    and not looks_like_header(prev.get("text", ""))
+                    and not _is_noise_text(prev.get("text", ""))
+                ):
                     current["text"] = f"{prev.get('text', '')} {current.get('text', '')}".strip()
                     current.setdefault("items", []).extend(prev.get("items") or [])
                     logical_rows.pop()
@@ -886,6 +910,8 @@ def parse_transactions(rows: List[dict]) -> List[dict]:
     for row in normalize_logical_rows(rows):
         try:
             text = re.sub(r"\s+", " ", row.get("text", "")).strip()
+            if _is_noise_text(text):
+                continue
             compact_text = _compact_spaced_text(text)
             lowered = compact_text.lower()
             money_values = money_values_from_text(compact_text)
@@ -913,7 +939,7 @@ def parse_transactions(rows: List[dict]) -> List[dict]:
                 continue
 
             # Capture opening/beginning balance
-            if any(x in lowered for x in ("opening balance", "beginning balance")) and money_values:
+            if any(x in lowered for x in ("opening balance", "beginning balance", "previous balance", "previous statement balance")) and money_values:
                 if not find_date(compact_text):
                     previous_balance = money_values[-1]
                     continue
@@ -921,6 +947,11 @@ def parse_transactions(rows: List[dict]) -> List[dict]:
                 previous_balance = money_values[-1]
 
             date_like_count = len(re.findall(r"\d{1,2}\s*[/-]\s*\d{1,2}(?:\s*[/-]\s*\d{2,4})?", compact_text))
+            if date_like_count >= 2 and (
+                "denotes missing check numbers" in lowered
+                or re.match(r"^\d{1,2}[/-]\d{1,2}\s+\d{3,6}\*?\s+", compact_text)
+            ):
+                continue
             transaction_words = (
                 "deposit", "credit", "debit", "withdrawal", "payment", "transfer",
                 "check", "fee", "purchase", "ach", "wire", "pos", "atm",

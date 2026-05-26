@@ -39,6 +39,7 @@ exports.uploadBatch = async (req, res) => {
   const total = files.length;
   let successCount = 0;
   let failCount = 0;
+  let completedCount = 0;
 
   // Helper: write a JSON line; ignore write errors (client may have disconnected)
   function writeLine(obj) {
@@ -47,18 +48,19 @@ exports.uploadBatch = async (req, res) => {
     } catch (_) { /* client disconnected – nothing to do */ }
   }
 
-  for (let index = 0; index < files.length; index++) {
-    const file = files[index];
-
+  files.forEach((file, index) => {
     writeLine({
       event: 'file_started',
       index,
       total,
       fileName: file.originalname,
+      progress: 10,
     });
+  });
 
+  const tasks = files.map(async (file, index) => {
     // Every file gets its own isolated try/catch.
-    // Nothing inside can propagate to the outer loop.
+    // Nothing inside can reject the full batch.
     let result = null;
     let fileError = null;
 
@@ -70,6 +72,7 @@ exports.uploadBatch = async (req, res) => {
 
     if (fileError) {
       failCount++;
+      completedCount++;
       writeLine({
         event: 'file_done',
         index,
@@ -77,9 +80,13 @@ exports.uploadBatch = async (req, res) => {
         fileName: file.originalname,
         success: false,
         error: fileError,
+        progress: 100,
+        completedCount,
+        overallProgress: Math.round((completedCount / total) * 100),
       });
     } else {
       successCount++;
+      completedCount++;
       writeLine({
         event: 'file_done',
         index,
@@ -87,18 +94,21 @@ exports.uploadBatch = async (req, res) => {
         fileName: file.originalname,
         success: true,
         data: result,
+        progress: 100,
+        completedCount,
+        overallProgress: Math.round((completedCount / total) * 100),
       });
     }
+  });
 
-    // Small yield so Node can flush the chunk before starting the next OCR call
-    await new Promise((resolve) => setImmediate(resolve));
-  }
+  await Promise.all(tasks);
 
   writeLine({
     event: 'batch_complete',
     total,
     successCount,
     failCount,
+    overallProgress: 100,
   });
 
   res.end();

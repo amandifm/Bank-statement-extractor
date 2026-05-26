@@ -1,10 +1,12 @@
 let transactions = [];
 
 exports.replaceTransactions = (items = []) => {
-  transactions = items.map((item, index) => ({
-    id: item.id || `txn-${String(index + 1).padStart(4, '0')}`,
+  const startIndex = transactions.length;
+  const newTransactions = items.map((item, index) => ({
+    id: item.id || `txn-${String(startIndex + index + 1).padStart(4, '0')}`,
     ...item,
   }));
+  transactions = [...transactions, ...newTransactions];
   return transactions;
 };
 

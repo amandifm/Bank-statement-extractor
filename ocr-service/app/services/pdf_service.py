@@ -10,7 +10,31 @@ logger = logging.getLogger(__name__)
 # zoom=2.77 ≈ 200 DPI (72 DPI × 2.77)
 _OCR_ZOOM = 2.77
 
+import pdfplumber
+from pathlib import Path
 
+def extract_native_pdf_text(pdf_path:str):
+
+    pages=[]
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+
+            for page in pdf.pages:
+
+                text=page.extract_text(
+                    x_tolerance=2,
+                    y_tolerance=2
+                )
+
+                if text:
+                    pages.append(text)
+
+        return "\n".join(pages)
+
+    except Exception:
+        return ""
+        
 def is_digital_pdf(pdf_path: str) -> bool:
     """Return True when the PDF has extractable text (not a scanned image)."""
     try:

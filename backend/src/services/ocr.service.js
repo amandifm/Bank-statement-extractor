@@ -2,7 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const env = require('../config/env');
 
-const OCR_TIMEOUT_MS = 180000;
+const OCR_TIMEOUT_MS = 600000;
 
 async function postFileToOcr(file) {
   const controller = new AbortController();

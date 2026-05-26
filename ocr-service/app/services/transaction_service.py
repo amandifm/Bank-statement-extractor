@@ -47,9 +47,12 @@ def _extract_with_ocr(source: Path, suffix: str) -> dict:
                     len(image_paths),
                     image_path,
                 )
-                image = preprocess_image(image_path)
-                processed_path = str(Path(temp_dir) / f"processed-{page_number}.png")
-                cv2.imwrite(processed_path, image)
+                if suffix == ".pdf":
+                    processed_path = image_path
+                else:
+                    image = preprocess_image(image_path)
+                    processed_path = str(Path(temp_dir) / f"processed-{page_number}.png")
+                    cv2.imwrite(processed_path, image)
 
                 lines = extract_lines(processed_path, page_number)
                 logger.info("Page %d: extracted %d text lines", page_number, len(lines))

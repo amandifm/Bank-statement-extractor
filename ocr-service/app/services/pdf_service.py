@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 from typing import List
 
@@ -7,8 +8,8 @@ import pdfplumber
 
 logger = logging.getLogger(__name__)
 
-# zoom=2.77 ≈ 200 DPI (72 DPI × 2.77)
-_OCR_ZOOM = 2.77
+# Lower default render size keeps scanned statements fast without losing table text.
+_OCR_ZOOM = float(os.getenv("OCR_PDF_ZOOM", "2.0"))
 
 import pdfplumber
 from pathlib import Path

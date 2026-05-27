@@ -36,9 +36,12 @@ async function connectDB() {
         transaction_count INTEGER NOT NULL DEFAULT 0,
         average_confidence NUMERIC(5, 4),
         transactions JSONB NOT NULL DEFAULT '[]'::jsonb,
+        metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
         summary JSONB NOT NULL DEFAULT '{}'::jsonb,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      ALTER TABLE scan_history ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb;
 
       CREATE INDEX IF NOT EXISTS idx_scan_history_user_id ON scan_history(user_id);
       CREATE INDEX IF NOT EXISTS idx_scan_history_created_at ON scan_history(created_at);

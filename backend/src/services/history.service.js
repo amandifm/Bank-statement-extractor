@@ -7,6 +7,7 @@ function mapHistory(row) {
     transactionCount: row.transaction_count,
     averageConfidence: row.average_confidence,
     transactions: row.transactions,
+    metadata: row.metadata,
     summary: row.summary,
     createdAt: row.created_at,
   };
@@ -14,7 +15,7 @@ function mapHistory(row) {
 
 exports.listHistory = async (userId) => {
   const result = await query(
-    `SELECT id, file_name, transaction_count, average_confidence, transactions, summary, created_at
+    `SELECT id, file_name, transaction_count, average_confidence, transactions, metadata, summary, created_at
      FROM scan_history
      WHERE user_id = $1
      ORDER BY created_at DESC`,
@@ -25,6 +26,7 @@ exports.listHistory = async (userId) => {
 
 exports.createHistory = async (userId, data) => {
   const transactions = Array.isArray(data.transactions) ? data.transactions : [];
+  const metadata = data.metadata || {};
   const summary = data.summary || {};
   const result = await query(
     `INSERT INTO scan_history (
@@ -33,16 +35,18 @@ exports.createHistory = async (userId, data) => {
       transaction_count,
       average_confidence,
       transactions,
+      metadata,
       summary
     )
-    VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb)
-    RETURNING id, file_name, transaction_count, average_confidence, transactions, summary, created_at`,
+    VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7::jsonb)
+    RETURNING id, file_name, transaction_count, average_confidence, transactions, metadata, summary, created_at`,
     [
       userId,
       data.fileName || 'Bank statement',
       transactions.length,
       summary.average_confidence || summary.averageConfidence || null,
       JSON.stringify(transactions),
+      JSON.stringify(metadata),
       JSON.stringify(summary),
     ]
   );

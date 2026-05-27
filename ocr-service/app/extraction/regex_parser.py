@@ -559,13 +559,13 @@ def _parse_navy_federal_row(
     return Transaction(
         id=f"txn-{index:04d}",
         date=date_match.group("date") if date_match else "",
-        description=desc[:100],
+        description=desc.strip(),
         debit=abs(amount) if t_type == "Debit" else None,
         credit=abs(amount) if t_type == "Credit" else None,
         balance=balance,
         type=t_type,
         confidence=round(confidence, 3),
-        raw_text=text[:200],
+        raw_text=text,
         page=row.get("page", 1),
     )
 
@@ -718,13 +718,13 @@ def parse_transaction_row_by_columns(
     return Transaction(
         id=f"txn-{index:04d}",
         date=clean_date(date_match.group("date")) if date_match else "",
-        description=description[:100],
+        description=description.strip(),
         debit=debit,
         credit=credit,
         balance=balance,
         type=t_type,
         confidence=round(confidence, 3),
-        raw_text=text[:200],
+        raw_text=text,
         page=row.get("page", 1),
     )
 
@@ -840,13 +840,13 @@ def parse_transaction_row(
     return Transaction(
         id=f"txn-{index:04d}",
         date=clean_date(date_match.group("date")),
-        description=description[:100],
+        description=description.strip(),
         debit=debit,
         credit=credit,
         balance=balance,
         type=t_type,
         confidence=round(confidence, 3),
-        raw_text=text[:200],
+        raw_text=text,
         page=row.get("page", 1),
     )
 
@@ -884,13 +884,13 @@ def parse_transaction_row_no_balance(
     return Transaction(
         id=f"txn-{index:04d}",
         date=clean_date(date_match.group("date")),
-        description=desc[:100],
+        description=desc.strip(),
         debit=amount if t_type == "Debit" else None,
         credit=amount if t_type == "Credit" else None,
         balance=None,
         type=t_type,
         confidence=round(confidence, 3),
-        raw_text=text[:200],
+        raw_text=text,
         page=row.get("page", 1),
     )
 

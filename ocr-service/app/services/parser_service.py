@@ -4,6 +4,7 @@ from app.extraction.regex_parser import parse_transactions
 from app.extraction.row_detector import detect_rows
 from app.extraction.table_detector import detect_table_region
 from app.services.metadata_service import extract_document_metadata
+from app.services.revenue_filter_service import classify_transactions
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +184,14 @@ def parse_bank_statement(ocr_lines):
         raw_text
     )
 
+    revenue_analysis = classify_transactions(
+        transactions
+    )
+
+    summary.update(
+        revenue_analysis["snapshot"]
+    )
+
     logger.info(
         f"Parsing complete: {summary}"
     )
@@ -203,4 +212,7 @@ def parse_bank_statement(ocr_lines):
 
         "metadata":
             metadata,
+
+        "revenue_analysis":
+            revenue_analysis,
     }

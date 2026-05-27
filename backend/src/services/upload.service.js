@@ -26,6 +26,7 @@ exports.processUpload = async (file) => {
       rawText: extractedData.rawText,
       document: extractedData.document,
       metadata: extractedData.metadata || {}, // Include extracted metadata
+      revenueAnalysis: extractedData.revenueAnalysis || {},
     };
 
     uploadStatuses.set(fileId, {

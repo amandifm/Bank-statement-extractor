@@ -54,6 +54,7 @@ exports.extractTransactions = async (file) => {
       rawText: result.raw_text || '',
       pages: result.pages || [],
       metadata: result.metadata || {}, // Pass through extracted metadata
+      revenueAnalysis: result.revenue_analysis || {},
       status: 'processed',
     };
   } catch (error) {

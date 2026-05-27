@@ -3,6 +3,18 @@ const uploadService = require('../services/upload.service');
 const ocrService = require('../services/ocr.service');
 const { sendSuccess, sendError } = require('../utils/response');
 
+const DEFAULT_BATCH_CONCURRENCY = 2;
+const MAX_BATCH_CONCURRENCY = 10;
+
+function getBatchConcurrency(totalFiles) {
+  const configured = Number.parseInt(process.env.BATCH_OCR_CONCURRENCY || '', 10);
+  const concurrency = Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_BATCH_CONCURRENCY;
+
+  return Math.min(totalFiles, MAX_BATCH_CONCURRENCY, concurrency);
+}
+
 // Single file upload (existing)
 exports.uploadFile = async (req, res) => {
   try {
@@ -16,7 +28,7 @@ exports.uploadFile = async (req, res) => {
   }
 };
 
-// Batch upload — processes up to 10 files sequentially, streaming NDJSON results.
+// Batch upload: processes up to 10 files with bounded parallelism, streaming NDJSON results.
 // Each file is fully isolated: any error (OCR timeout, corrupt PDF, network blip)
 // is caught, reported, and the loop unconditionally advances to the next file.
 exports.uploadBatch = async (req, res) => {
@@ -37,6 +49,7 @@ exports.uploadBatch = async (req, res) => {
   res.flushHeaders();
 
   const total = files.length;
+  const concurrency = getBatchConcurrency(total);
   let successCount = 0;
   let failCount = 0;
   let completedCount = 0;
@@ -48,17 +61,16 @@ exports.uploadBatch = async (req, res) => {
     } catch (_) { /* client disconnected – nothing to do */ }
   }
 
-  files.forEach((file, index) => {
+  async function processFile(file, index) {
     writeLine({
       event: 'file_started',
       index,
       total,
       fileName: file.originalname,
       progress: 10,
+      concurrency,
     });
-  });
 
-  const tasks = files.map(async (file, index) => {
     // Every file gets its own isolated try/catch.
     // Nothing inside can reject the full batch.
     let result = null;
@@ -99,9 +111,18 @@ exports.uploadBatch = async (req, res) => {
         overallProgress: Math.round((completedCount / total) * 100),
       });
     }
+  }
+
+  let nextIndex = 0;
+  const workers = Array.from({ length: concurrency }, async () => {
+    while (nextIndex < files.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      await processFile(files[index], index);
+    }
   });
 
-  await Promise.all(tasks);
+  await Promise.all(workers);
 
   writeLine({
     event: 'batch_complete',

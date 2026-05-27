@@ -6,9 +6,16 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify
 from flask_cors import CORS
 
-from app.routes.extract import extract_bp
-
 load_dotenv()
+
+# Keep Paddle/OpenCV CPU usage bounded on laptops. Users can override these in
+# their environment if they run the OCR service on a larger machine.
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+os.environ.setdefault("MKL_NUM_THREADS", "2")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "2")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "2")
+
+from app.routes.extract import extract_bp
 
 # Configure logging
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -49,4 +56,5 @@ if __name__ == "__main__":
     port = int(os.getenv("OCR_PORT", "8000"))
     logger.info(f"Starting OCR service on port {port}")
     logger.info(f"Log level: {log_level}")
-    app.run(host="0.0.0.0", port=port, debug=os.getenv("FLASK_ENV") == "development")
+    debug = os.getenv("FLASK_ENV") == "development"
+    app.run(host="0.0.0.0", port=port, debug=debug, use_reloader=False)

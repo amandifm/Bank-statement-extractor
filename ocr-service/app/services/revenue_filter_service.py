@@ -2,28 +2,46 @@
 revenue_filter_service.py
 =========================
 Classifies every transaction credit as **Revenue** or **Deduction** following
-the Master Keyword rules defined in the underwriting guidelines.
+the Master Keyword rules from the underwriting guidelines.
 
 Architecture
 ------------
-* DEDUCTION_RULES        – three broad category buckets (Financing/Loans,
-                           Internal Transfers, Banking Corrections/Reversals).
-* WIRE_DEDUCTION_PATTERNS – applied only when the description contains "wire".
-  Standard business wires are kept; wires whose sender description matches a
-  merchant name, merchant surname, lender, or LOC keyword are deducted.
-* classify_transactions() – public entry point; accepts the flat transaction
-  list produced by the parser PLUS optional document metadata (account_holder /
-  business_name) so that owner-name and business-name transfers can be caught.
+DEDUCTION_RULES        – three broad category buckets:
+                           1. Financing & Loans
+                           2. Internal Transfers & Linked Accounts
+                           3. Banking Corrections, Reversals & Perks
+
+WIRE_DEDUCTION_PATTERNS – applied ONLY when description contains "wire".
+                          Standard business wires are KEPT as revenue.
+                          Wires whose sender matches a merchant name,
+                          merchant surname, lender, or LOC keyword are DEDUCTED.
+
+classify_transactions() – public entry-point; accepts the flat transaction
+                          list from the parser PLUS optional document metadata
+                          (account_holder / business_name) to catch owner-name
+                          and business-name self-transfers.
+
+False-positive guards
+---------------------
+Two patterns require extra context to avoid misfiring:
+
+  "interest"  – \binterest\b fires on company names like
+                "FIRST INTEREST FINANCIAL GROUP". Guard: only deduct when
+                the line also contains a banking-context word (earned, paid,
+                accrued, dividend, rate, APY, APR, credited, posted, income).
+
+  "rewards"   – \brewards?\b fires on merchant loyalty descriptions like
+                "STAPLES REWARDS DEPOSIT". Guard: only deduct when the line
+                ALSO contains a bank-perk indicator (cashback, rebate, RBT,
+                point, bonus, bank, credit union) OR the rewards word is
+                NOT followed by a merchant-like context.
 
 Owner/Business-Name Matching Rules
 -----------------------------------
-- For WIRE deposits: if the sender name matches the account holder or business
-  name, treat as an internal self-wire (deduction).
-- For NON-WIRE deposits: only flag as deduction if BOTH (a) the description
-  contains the owner/business name AND (b) the description also contains an
-  explicit transfer/payment indicator keyword (e.g. "transfer", "authorized
-  from", "from acct", etc.).  This prevents false positives on merchant-card
-  settlement lines that legitimately include the DBA name.
+- Wire deposits: sender matches account holder/business → deduction.
+- Non-wire deposits: only flag when BOTH (a) owner/business name present
+  AND (b) a transfer-indicator keyword is also present.
+  Prevents false positives on merchant card settlement lines.
 """
 
 from __future__ import annotations
@@ -40,10 +58,7 @@ Rule = Dict[str, Any]
 
 # ---------------------------------------------------------------------------
 # TRANSFER INDICATOR PATTERNS
-# Used as a co-presence guard when checking owner/business names in non-wire
-# descriptions.  A deposit that contains the business name AND one of these
-# keywords is treated as an internal transfer; one that only contains the
-# business name (e.g. a merchant settlement) is kept as revenue.
+# Co-presence guard for owner/business-name checks on non-wire credits.
 # ---------------------------------------------------------------------------
 _TRANSFER_INDICATOR = re.compile(
     r"\b(?:transfer|xfer|xfr|authorized\s+from|from\s+acct|from\s+account|"
@@ -53,6 +68,27 @@ _TRANSFER_INDICATOR = re.compile(
     re.IGNORECASE,
 )
 
+# ---------------------------------------------------------------------------
+# FALSE-POSITIVE GUARD: "interest"
+# Only deduce when the line carries a banking-context word alongside it.
+# Company names like "FIRST INTEREST FINANCIAL GROUP" will NOT match.
+# ---------------------------------------------------------------------------
+_INTEREST_BANKING_CONTEXT = re.compile(
+    r"\b(?:earned|paid|accrued|dividend|rate|apy|apr|credited|posted|"
+    r"income|bearing|bearing|savings|checking|deposit|compounded|yield)\b",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
+# FALSE-POSITIVE GUARD: "rewards" / "rebate"
+# Merchant loyalty programs (STAPLES REWARDS DEPOSIT) should NOT be deducted.
+# Only deduct when a bank-perk indicator is also present.
+# ---------------------------------------------------------------------------
+_REWARDS_BANK_CONTEXT = re.compile(
+    r"\b(?:cashback|cash\s*back|rebate|rbt|point|bonus|bank|credit\s+union|"
+    r"debit\s+card|visa|mastercard|amex|perk|statement\s+credit)\b",
+    re.IGNORECASE,
+)
 
 # ---------------------------------------------------------------------------
 # DEDUCTION RULES
@@ -68,10 +104,12 @@ DEDUCTION_RULES: List[Rule] = [
             "provisional/temporary credit deposit"
         ),
         "patterns": [
-            # Advances (Retro Advance, MCA Advance, Cash Advance, etc.)
+            # Advances — Retro Advance, MCA Advance, Cash Advance, merchant advance, etc.
             r"\badvance(?:s|d)?\b",
-            # LOC / OLB / OCC loan codes
-            r"\b(?:loc|olb|occ)\b",
+            # LOC / OLB / OCC loan codes (standalone tokens only)
+            r"\bloc\b",
+            r"\bolb\b",
+            r"\bocc\b",
             # Explicit line-of-credit phrase
             r"\bline\s+of\s+credit\b",
             # Overdraft / OD deposits
@@ -82,8 +120,11 @@ DEDUCTION_RULES: List[Rule] = [
             r"\btemporary\s+credit\b",
             # Generic loan / lending / lender / funding / finance / capital /
             # lease / leasing / personal loan
-            r"\b(?:loan|lending|lender|funding|finance|financing|capital|"
-            r"lease|leasing|personal\s+loan)\b",
+            r"\b(?:loan|lending|lender)\b",
+            r"\b(?:funding|finance|financing)\b",
+            r"\b(?:capital)\b",
+            r"\b(?:lease|leasing)\b",
+            r"\bpersonal\s+loan\b",
             # Named equipment-finance and MCA lenders
             r"\bnextgear\b",
             r"\bcashflow\s+funding\b",
@@ -111,8 +152,8 @@ DEDUCTION_RULES: List[Rule] = [
             r"\bcol\s+xfer\b",
             # Deposit transfer referencing masked account numbers (xxxx1234 / ****1234)
             r"\bdeposit\s+transfer\b.*\b(?:x{2,}|\*{2,})\d{2,}\b",
-            # Payroll account transfers
-            r"\bpayroll\s+(?:account|transfer|xfer|deposit)\b",
+            # Payroll account transfers (NOT payroll income)
+            r"\bpayroll\s+(?:account|transfer|xfer)\b",
             # Fund / transfer / XFR / XFER (generic)
             r"\bfunds?\s+transfer(?:s)?\b",
             r"\btransfer(?:s)?\b",
@@ -131,7 +172,7 @@ DEDUCTION_RULES: List[Rule] = [
             r"\bpc\s+transfers?\b",
             # Telephone / tele transfers
             r"\btele(?:phone)?\s+transfers?\b",
-            # Acorns micro-investment app
+            # Acorns micro-investment app deposits
             r"\bacorns\b",
             # "authorized from" (owner-name money transfers)
             r"\bauthorized\s+from\b",
@@ -161,18 +202,19 @@ DEDUCTION_RULES: List[Rule] = [
             # NSF (Non-Sufficient Funds) deposits
             r"\bnsf\b",
             r"\bnon[-\s]*sufficient\s+funds\b",
-            # Returns / RTN / RET
-            r"\breturns?\b",
+            # Returns / RTN / RET (word-boundary anchored to avoid false hits
+            # on words like RETIREMENT, PATRON, RETURN-TO-SENDER descriptions
+            # that don't represent banking returns)
+            r"\breturn(?:ed|s)?\b",
             r"\brtn\b",
             r"\bret\b",
-            # Cashback / rewards / rebates / RBT
+            # Cashback (always a bank perk — deduct)
             r"\bcash\s*back\b",
-            r"\brewards?\b",
+            # Rebates / RBT
             r"\brebates?\b",
             r"\brbt\b",
-            # Dividends / interest
+            # Dividends
             r"\bdividends?\b",
-            r"\binterest\b",
             # Refunds
             r"\brefunds?\b",
             # Treasury payments (TREAS / TREAS 310, etc.)
@@ -185,6 +227,11 @@ DEDUCTION_RULES: List[Rule] = [
             r"\bverify\s+deposits?\b",
             r"\bverification\s+deposits?\b",
         ],
+        # ── Patterns that need extra context (false-positive guards) ──────
+        # These are handled SEPARATELY in _match_rule() below, NOT in the
+        # standard pattern loop.  They are listed here for documentation only.
+        # "interest" → only deduct when banking context word is present
+        # "rewards"  → only deduct when bank-perk context word is present
     },
 ]
 
@@ -192,6 +239,7 @@ DEDUCTION_RULES: List[Rule] = [
 # ---------------------------------------------------------------------------
 # WIRE DEDUCTION PATTERNS
 # Applied only when the description already contains the word "wire".
+# Standard business wires (no matching keyword) are KEPT as revenue.
 # ---------------------------------------------------------------------------
 WIRE_DEDUCTION_PATTERNS: List[str] = [
     r"\bmerchant\b",
@@ -285,12 +333,15 @@ def _match_rule(
     ----------------------------
     Applied to all non-wire credits.
 
+    Special guards (applied AFTER pattern loop):
+      "interest" → deduct only when a banking-context word is also present.
+      "rewards"  → deduct only when a bank-perk context word is also present.
+
     Owner/business name guard (non-wire only)
     -----------------------------------------
     Owner/business patterns are only flagged as deductions on non-wire credits
-    when a transfer-indicator keyword is ALSO present in the description.
-    This prevents merchant card settlement lines (which legally include the
-    DBA name) from being misclassified.
+    when a transfer-indicator keyword is ALSO present.
+    This prevents merchant card settlement lines from being misclassified.
     """
     text = description.lower()
 
@@ -322,9 +373,30 @@ def _match_rule(
                     "matched_pattern": pattern,
                 }
 
+    # ── Context-guarded: "interest" ──────────────────────────────────────
+    # Bare \binterest\b fires on company names like "FIRST INTEREST FINANCIAL".
+    # Only deduct when a banking-context word confirms it's actually interest income.
+    if re.search(r"\binterest\b", text, re.IGNORECASE):
+        if _INTEREST_BANKING_CONTEXT.search(text):
+            return {
+                "category": "Banking Corrections, Reversals & Perks",
+                "reason": "Interest income/perk (not counted as operating revenue)",
+                "matched_pattern": r"\binterest\b (with banking context)",
+            }
+
+    # ── Context-guarded: "rewards" ───────────────────────────────────────
+    # Merchant loyalty program lines (STAPLES REWARDS DEPOSIT) should be KEPT.
+    # Only deduct when a bank-perk indicator confirms it's from the bank itself.
+    if re.search(r"\brewards?\b", text, re.IGNORECASE):
+        if _REWARDS_BANK_CONTEXT.search(text):
+            return {
+                "category": "Banking Corrections, Reversals & Perks",
+                "reason": "Bank reward/cashback perk (not counted as operating revenue)",
+                "matched_pattern": r"\brewards?\b (with bank-perk context)",
+            }
+
     # ── Owner/business name check (non-wire, with transfer-indicator guard) ─
     # Only flag when the description ALSO contains an explicit transfer keyword.
-    # This avoids false positives on merchant-card settlements that include the DBA.
     if wire_extra_patterns and _TRANSFER_INDICATOR.search(text):
         for pattern in wire_extra_patterns:
             if re.search(pattern, text, re.IGNORECASE):
@@ -355,7 +427,7 @@ def classify_transactions(
     Parameters
     ----------
     transactions : list of dicts
-        Flat transaction list from the parser.  Each dict must contain at
+        Flat transaction list from the parser. Each dict must contain at
         minimum: description (or raw_text), credit, debit.
     metadata : dict, optional
         Document-level metadata from metadata_service.
@@ -364,10 +436,10 @@ def classify_transactions(
 
     Returns
     -------
-    dict
-        snapshot           – high-level totals at a glance (raw vs adjusted)
-        credits_breakdown  – itemised list of every credit with status + reason
-        debits_breakdown   – itemised list of every debit
+    dict with three keys:
+        snapshot           – high-level totals: raw vs adjusted, variance
+        credits_breakdown  – every credit itemised with status + reason
+        debits_breakdown   – every debit with full description and amount
     """
     owner_patterns = _build_owner_patterns(metadata)
 

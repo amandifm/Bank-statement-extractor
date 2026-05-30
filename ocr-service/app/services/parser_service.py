@@ -185,7 +185,8 @@ def parse_bank_statement(ocr_lines):
     )
 
     revenue_analysis = classify_transactions(
-        transactions
+        transactions,
+        metadata=metadata,
     )
 
     summary.update(
